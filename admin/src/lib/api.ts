@@ -324,6 +324,7 @@ export interface AdminRuntimeConfig {
   eval_max_items: number
   eval_provider: string
   eval_models_config: string
+  eval_execution_mode: string
   updated_at: string | null
 }
 
@@ -332,6 +333,7 @@ export interface AdminRuntimeConfigUpdate {
   eval_max_items: number
   eval_provider: string
   eval_models_config: string
+  eval_execution_mode: string
 }
 
 export interface AdminReviewControl {
