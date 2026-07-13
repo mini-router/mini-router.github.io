@@ -73,6 +73,11 @@ const MODEL_SET_OPTIONS = [
   { value: 'configs/models.openrouter.yaml', label: 'OpenRouter full' },
 ]
 
+const EXECUTION_MODE_OPTIONS = [
+  { value: 'remote_gpu', label: 'Remote GPU' },
+  { value: 'local_cpu', label: 'Local CPU' },
+]
+
 const STORAGE_KEYS = {
   authToken: 'minirouter.admin.token',
   authUser: 'minirouter.admin.authUser',
@@ -516,6 +521,7 @@ function App() {
   const [runtimeMaxItems, setRuntimeMaxItems] = useState(20)
   const [runtimeProvider, setRuntimeProvider] = useState('chutes')
   const [runtimeModelsConfig, setRuntimeModelsConfig] = useState('configs/models.chutes.light.yaml')
+  const [runtimeExecutionMode, setRuntimeExecutionMode] = useState('remote_gpu')
   const [runtimeConfigSaving, setRuntimeConfigSaving] = useState(false)
   const [runtimeConfigNote, setRuntimeConfigNote] = useState<string | null>(null)
   const [reviewControl, setReviewControl] = useState<AdminReviewControl | null>(null)
@@ -602,11 +608,13 @@ function App() {
         eval_max_items: runtimeMaxItems,
         eval_provider: runtimeProvider,
         eval_models_config: runtimeModelsConfig,
+        eval_execution_mode: runtimeExecutionMode,
       })
       setRuntimeBenchmarks(result.benchmark_names.length ? result.benchmark_names : ['math500'])
       setRuntimeMaxItems(result.eval_max_items)
       setRuntimeProvider(result.eval_provider)
       setRuntimeModelsConfig(result.eval_models_config)
+      setRuntimeExecutionMode(result.eval_execution_mode || 'remote_gpu')
       setRuntimeConfigNote('Evaluation defaults updated.')
       await refreshDashboard()
     } catch (error) {
@@ -665,6 +673,7 @@ function App() {
       setRuntimeMaxItems(config.eval_max_items)
       setRuntimeProvider(config.eval_provider)
       setRuntimeModelsConfig(config.eval_models_config)
+      setRuntimeExecutionMode(config.eval_execution_mode || 'remote_gpu')
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         await expireSession()
@@ -1007,7 +1016,7 @@ function App() {
           }
         >
           <div className="panel p-5">
-            <div className="grid gap-4 xl:grid-cols-[1.4fr_0.9fr_1fr_1fr]">
+            <div className="grid gap-4 xl:grid-cols-[1.4fr_0.9fr_1fr_1fr_1fr]">
               <Field
                 label="Benchmark list"
                 help="The current evaluator uses the first selected benchmark as the active runtime benchmark."
@@ -1051,6 +1060,21 @@ function App() {
                   onChange={(event) => setRuntimeModelsConfig(event.target.value)}
                 >
                   {MODEL_SET_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                label="Runtime mode"
+                help="Default execution path for evaluations. Remote GPU is the default; local CPU is the fallback and manual-debug option."
+              >
+                <Select
+                  value={runtimeExecutionMode}
+                  onChange={(event) => setRuntimeExecutionMode(event.target.value)}
+                >
+                  {EXECUTION_MODE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
