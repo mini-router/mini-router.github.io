@@ -319,6 +319,21 @@ export interface AdminMeResponse {
   username: string
 }
 
+export interface AdminRuntimeConfig {
+  benchmark_names: string[]
+  eval_max_items: number
+  eval_provider: string
+  eval_models_config: string
+  updated_at: string | null
+}
+
+export interface AdminRuntimeConfigUpdate {
+  benchmark_names: string[]
+  eval_max_items: number
+  eval_provider: string
+  eval_models_config: string
+}
+
 export async function fetchAdminLogin(payload: AdminLoginRequest): Promise<AdminLoginResponse> {
   const response = await fetch(apiUrl(`${ADMIN_API_PREFIX}/login`), {
     method: 'POST',
@@ -337,6 +352,22 @@ export async function fetchAdminLogin(payload: AdminLoginRequest): Promise<Admin
 
 export async function fetchAdminMe(): Promise<AdminMeResponse> {
   return requestJson<AdminMeResponse>(`${ADMIN_API_PREFIX}/me`)
+}
+
+export async function fetchAdminConfig(): Promise<AdminRuntimeConfig> {
+  return requestJson<AdminRuntimeConfig>(`${ADMIN_API_PREFIX}/config`)
+}
+
+export async function updateAdminConfig(
+  payload: AdminRuntimeConfigUpdate,
+): Promise<AdminRuntimeConfig> {
+  return requestJson<AdminRuntimeConfig>(`${ADMIN_API_PREFIX}/config`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function fetchAdminLogout(): Promise<{ ok: boolean }> {

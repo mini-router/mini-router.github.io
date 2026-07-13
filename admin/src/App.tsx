@@ -5,6 +5,7 @@ import {
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  type SelectHTMLAttributes,
   type ReactNode,
 } from 'react'
 import {
@@ -33,6 +34,7 @@ import {
   createTrainJob,
   fetchAdminLogin,
   fetchAdminLogout,
+  fetchAdminConfig,
   fetchAdminMe,
   fetchEvaluation,
   fetchHealth,
@@ -44,6 +46,7 @@ import {
   setApiBaseUrl,
   setAdminAuthToken,
   submitCheckpoint,
+  updateAdminConfig,
 } from './lib/api'
 import type {
   BackendEvaluationOut,
@@ -56,6 +59,13 @@ import type { LeaderboardEntry } from './types'
 type StatusTone = 'ok' | 'warn' | 'bad' | 'idle'
 
 const BENCHMARK_OPTIONS = ['math500', 'mmlu', 'gsm8k', 'humaneval', 'bbh', 'livecodebench']
+
+const MODEL_SET_OPTIONS = [
+  { value: 'configs/models.chutes.light.yaml', label: 'Chutes light' },
+  { value: 'configs/models.openrouter.light.yaml', label: 'OpenRouter light' },
+  { value: 'configs/models.chutes.yaml', label: 'Chutes full' },
+  { value: 'configs/models.openrouter.yaml', label: 'OpenRouter full' },
+]
 
 const STORAGE_KEYS = {
   authToken: 'minirouter.admin.token',
@@ -203,6 +213,19 @@ function Input(props: InputHTMLAttributes<HTMLInputElement>) {
       className={[
         'w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none',
         'placeholder:text-slate-500 focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/10',
+        props.className || '',
+      ].join(' ')}
+    />
+  )
+}
+
+function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      {...props}
+      className={[
+        'w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none',
+        'focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/10',
         props.className || '',
       ].join(' ')}
     />
@@ -483,6 +506,12 @@ function App() {
   const [jobsError, setJobsError] = useState<string | null>(null)
   const [jobsLoading, setJobsLoading] = useState(false)
   const [jobsFilter, setJobsFilter] = useState<'all' | 'submission' | 'train' | 'evaluation'>('all')
+  const [runtimeBenchmarks, setRuntimeBenchmarks] = useState<string[]>(['math500'])
+  const [runtimeMaxItems, setRuntimeMaxItems] = useState(20)
+  const [runtimeProvider, setRuntimeProvider] = useState('chutes')
+  const [runtimeModelsConfig, setRuntimeModelsConfig] = useState('configs/models.chutes.light.yaml')
+  const [runtimeConfigSaving, setRuntimeConfigSaving] = useState(false)
+  const [runtimeConfigNote, setRuntimeConfigNote] = useState<string | null>(null)
   const [submissionId, setSubmissionId] = useState(
     localStorage.getItem(STORAGE_KEYS.submissionId) || '',
   )
@@ -544,6 +573,59 @@ function App() {
       }
     }
   }
+
+  const toggleRuntimeBenchmark = (benchmark: string) => {
+    setRuntimeBenchmarks((current) => {
+      if (current.includes(benchmark)) {
+        const next = current.filter((item) => item !== benchmark)
+        return next.length ? next : current
+      }
+      return [...current, benchmark]
+    })
+  }
+
+  const saveRuntimeConfig = async () => {
+    setRuntimeConfigSaving(true)
+    setRuntimeConfigNote(null)
+    try {
+      const result = await updateAdminConfig({
+        benchmark_names: runtimeBenchmarks,
+        eval_max_items: runtimeMaxItems,
+        eval_provider: runtimeProvider,
+        eval_models_config: runtimeModelsConfig,
+      })
+      setRuntimeBenchmarks(result.benchmark_names.length ? result.benchmark_names : ['math500'])
+      setRuntimeMaxItems(result.eval_max_items)
+      setRuntimeProvider(result.eval_provider)
+      setRuntimeModelsConfig(result.eval_models_config)
+      setRuntimeConfigNote('Evaluation defaults updated.')
+      await refreshDashboard()
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setRuntimeConfigNote(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      setRuntimeConfigSaving(false)
+    }
+  }
+
+  const loadRuntimeConfig = useCallback(async () => {
+    try {
+      const config = await fetchAdminConfig()
+      setRuntimeBenchmarks(config.benchmark_names?.length ? config.benchmark_names : ['math500'])
+      setRuntimeMaxItems(config.eval_max_items)
+      setRuntimeProvider(config.eval_provider)
+      setRuntimeModelsConfig(config.eval_models_config)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setRuntimeConfigNote(error instanceof Error ? error.message : String(error))
+      }
+    }
+  }, [expireSession])
 
   useEffect(() => {
     setApiBaseUrl(apiBaseInput)
@@ -622,8 +704,9 @@ function App() {
 
   useEffect(() => {
     if (!isAuthed || isCheckingSession) return
+    void loadRuntimeConfig()
     void refreshDashboard()
-  }, [isAuthed, isCheckingSession, refreshDashboard])
+  }, [isAuthed, isCheckingSession, loadRuntimeConfig, refreshDashboard])
 
   const loadSubmission = async () => {
     const id = submissionId.trim()
@@ -844,6 +927,81 @@ function App() {
             </div>
           </div>
         </section>
+
+        <Section
+          eyebrow="Runtime defaults"
+          title="Evaluation defaults"
+          description="These settings are stored in the backend database and used as the default benchmark list, item cap, and model preset for queued evaluations and submissions."
+          actions={
+            <Button
+              variant="quiet"
+              onClick={() => void saveRuntimeConfig()}
+              disabled={runtimeConfigSaving}
+              icon={runtimeConfigSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            >
+              Save defaults
+            </Button>
+          }
+        >
+          <div className="panel p-5">
+            <div className="grid gap-4 xl:grid-cols-[1.4fr_0.9fr_1fr_1fr]">
+              <Field
+                label="Benchmark list"
+                help="The current evaluator uses the first selected benchmark as the active runtime benchmark."
+              >
+                <div className="flex flex-wrap gap-2">
+                  {BENCHMARK_OPTIONS.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => toggleRuntimeBenchmark(item)}
+                      className={[
+                        'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                        runtimeBenchmarks.includes(item)
+                          ? 'border-cyan-400/40 bg-cyan-400/15 text-cyan-100'
+                          : 'border-white/10 bg-white/5 text-slate-300 hover:border-cyan-400/30 hover:bg-cyan-400/10 hover:text-cyan-100',
+                      ].join(' ')}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              <Field label="Max items" help="Default item cap for evaluation runs.">
+                <Input
+                  type="number"
+                  min={1}
+                  value={runtimeMaxItems}
+                  onChange={(event) => setRuntimeMaxItems(Math.max(1, Number(event.target.value) || 1))}
+                />
+              </Field>
+              <Field label="Provider" help="Default provider used when queueing evaluation jobs.">
+                <Select value={runtimeProvider} onChange={(event) => setRuntimeProvider(event.target.value)}>
+                  <option value="chutes">chutes</option>
+                  <option value="openrouter">openrouter</option>
+                  <option value="fireworks">fireworks</option>
+                </Select>
+              </Field>
+              <Field label="Model set" help="Default model config file used by the evaluator.">
+                <Select
+                  value={runtimeModelsConfig}
+                  onChange={(event) => setRuntimeModelsConfig(event.target.value)}
+                >
+                  {MODEL_SET_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+            {runtimeConfigNote ? (
+              <div className="mt-4 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+                {runtimeConfigNote}
+              </div>
+            ) : null}
+          </div>
+        </Section>
 
         <Section
           eyebrow="Worker queue"
