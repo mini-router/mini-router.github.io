@@ -334,6 +334,13 @@ export interface AdminRuntimeConfigUpdate {
   eval_models_config: string
 }
 
+export interface AdminReviewControl {
+  enabled: boolean
+  started_by: string | null
+  started_at: string | null
+  updated_at: string
+}
+
 export async function fetchAdminLogin(payload: AdminLoginRequest): Promise<AdminLoginResponse> {
   const response = await fetch(apiUrl(`${ADMIN_API_PREFIX}/login`), {
     method: 'POST',
@@ -367,6 +374,22 @@ export async function updateAdminConfig(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
+  })
+}
+
+export async function fetchReviewControl(): Promise<AdminReviewControl> {
+  return requestJson<AdminReviewControl>(`${ADMIN_API_PREFIX}/review`)
+}
+
+export async function startReviewControl(): Promise<AdminReviewControl> {
+  return requestJson<AdminReviewControl>(`${ADMIN_API_PREFIX}/review/start`, {
+    method: 'POST',
+  })
+}
+
+export async function pauseReviewControl(): Promise<AdminReviewControl> {
+  return requestJson<AdminReviewControl>(`${ADMIN_API_PREFIX}/review/pause`, {
+    method: 'POST',
   })
 }
 

@@ -19,6 +19,8 @@ import {
   FileUp,
   Gauge,
   LoaderCircle,
+  Pause,
+  Play,
   RefreshCw,
   Save,
   Server,
@@ -40,12 +42,15 @@ import {
   fetchHealth,
   fetchLeaderboard,
   fetchQueuedJobs,
+  fetchReviewControl,
   fetchSubmission,
   getAdminAuthToken,
+  pauseReviewControl,
   resetApiBaseUrl,
   setApiBaseUrl,
   setAdminAuthToken,
   submitCheckpoint,
+  startReviewControl,
   updateAdminConfig,
 } from './lib/api'
 import type {
@@ -53,6 +58,7 @@ import type {
   BackendJobQueueOut,
   BackendSubmissionOut,
   BackendTrainOut,
+  AdminReviewControl,
 } from './lib/api'
 import type { LeaderboardEntry } from './types'
 
@@ -512,6 +518,9 @@ function App() {
   const [runtimeModelsConfig, setRuntimeModelsConfig] = useState('configs/models.chutes.light.yaml')
   const [runtimeConfigSaving, setRuntimeConfigSaving] = useState(false)
   const [runtimeConfigNote, setRuntimeConfigNote] = useState<string | null>(null)
+  const [reviewControl, setReviewControl] = useState<AdminReviewControl | null>(null)
+  const [reviewActionLoading, setReviewActionLoading] = useState(false)
+  const [reviewActionNote, setReviewActionNote] = useState<string | null>(null)
   const [submissionId, setSubmissionId] = useState(
     localStorage.getItem(STORAGE_KEYS.submissionId) || '',
   )
@@ -611,6 +620,44 @@ function App() {
     }
   }
 
+  const startReview = async () => {
+    setReviewActionLoading(true)
+    setReviewActionNote(null)
+    try {
+      const result = await startReviewControl()
+      setReviewControl(result)
+      setReviewActionNote('Review queue enabled.')
+      await refreshDashboard()
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setReviewActionNote(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      setReviewActionLoading(false)
+    }
+  }
+
+  const pauseReview = async () => {
+    setReviewActionLoading(true)
+    setReviewActionNote(null)
+    try {
+      const result = await pauseReviewControl()
+      setReviewControl(result)
+      setReviewActionNote('Review queue paused.')
+      await refreshDashboard()
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setReviewActionNote(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      setReviewActionLoading(false)
+    }
+  }
+
   const loadRuntimeConfig = useCallback(async () => {
     try {
       const config = await fetchAdminConfig()
@@ -623,6 +670,19 @@ function App() {
         await expireSession()
       } else {
         setRuntimeConfigNote(error instanceof Error ? error.message : String(error))
+      }
+    }
+  }, [expireSession])
+
+  const loadReviewControl = useCallback(async () => {
+    try {
+      const control = await fetchReviewControl()
+      setReviewControl(control)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setReviewActionNote(error instanceof Error ? error.message : String(error))
       }
     }
   }, [expireSession])
@@ -678,14 +738,16 @@ function App() {
     setJobsError(null)
     try {
       const jobType = jobsFilter === 'all' ? undefined : jobsFilter
-      const [health, board, queue] = await Promise.all([
+      const [health, board, queue, review] = await Promise.all([
         fetchHealth(),
         fetchLeaderboard(50),
         fetchQueuedJobs('queued,running', jobType, 100),
+        fetchReviewControl(),
       ])
       setHealthStatus(health.status)
       setLeaderboard(board)
       setJobs(queue)
+      setReviewControl(review)
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         await expireSession()
@@ -705,8 +767,9 @@ function App() {
   useEffect(() => {
     if (!isAuthed || isCheckingSession) return
     void loadRuntimeConfig()
+    void loadReviewControl()
     void refreshDashboard()
-  }, [isAuthed, isCheckingSession, loadRuntimeConfig, refreshDashboard])
+  }, [isAuthed, isCheckingSession, loadRuntimeConfig, loadReviewControl, refreshDashboard])
 
   const loadSubmission = async () => {
     const id = submissionId.trim()
@@ -1009,6 +1072,28 @@ function App() {
           description="Live job rows pulled from the backend queue. Submission jobs, train jobs, and evaluation jobs are shown together so you can see what is waiting, what is running, and what failed."
           actions={
             <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-full border px-2.5 py-1 text-xs ${statusClass(reviewControl?.enabled ? 'completed' : 'queued')}`}>
+                {reviewControl?.enabled ? 'review active' : 'review paused'}
+              </span>
+              {!reviewControl?.enabled ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => void startReview()}
+                  disabled={reviewActionLoading}
+                  icon={reviewActionLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                >
+                  Start review
+                </Button>
+              ) : (
+                <Button
+                  variant="quiet"
+                  onClick={() => void pauseReview()}
+                  disabled={reviewActionLoading}
+                  icon={reviewActionLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />}
+                >
+                  Pause review
+                </Button>
+              )}
               <QueueFilterButton active={jobsFilter === 'all'} onClick={() => setJobsFilter('all')}>
                 All
               </QueueFilterButton>
@@ -1030,6 +1115,11 @@ function App() {
           {jobsError ? (
             <div className="mb-4 rounded-lg border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
               {jobsError}
+            </div>
+          ) : null}
+          {reviewActionNote ? (
+            <div className="mb-4 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+              {reviewActionNote}
             </div>
           ) : null}
           {jobsLoading && !jobs.length ? (
