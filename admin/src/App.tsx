@@ -31,12 +31,18 @@ import {
   fetchEvaluation,
   fetchHealth,
   fetchLeaderboard,
+  fetchQueuedJobs,
   fetchSubmission,
   resetApiBaseUrl,
   setApiBaseUrl,
   submitCheckpoint,
 } from './lib/api'
-import type { BackendEvaluationOut, BackendSubmissionOut, BackendTrainOut } from './lib/api'
+import type {
+  BackendEvaluationOut,
+  BackendJobQueueOut,
+  BackendSubmissionOut,
+  BackendTrainOut,
+} from './lib/api'
 import type { LeaderboardEntry } from './types'
 
 type StatusTone = 'ok' | 'warn' | 'bad' | 'idle'
@@ -366,6 +372,66 @@ function RunTable({
   )
 }
 
+function JobTable({ jobs }: { jobs: BackendJobQueueOut[] }) {
+  if (!jobs.length) {
+    return (
+      <div className="rounded-lg border border-dashed border-white/10 bg-white/3 px-4 py-5 text-sm text-slate-400">
+        No queued or running jobs found.
+      </div>
+    )
+  }
+
+  return (
+    <div className="table-shell">
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-sm">
+          <thead className="bg-white/5 text-slate-300">
+            <tr>
+              <th className="px-4 py-3 font-medium">Type</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Submission</th>
+              <th className="px-4 py-3 font-medium">Train</th>
+              <th className="px-4 py-3 font-medium">Queue</th>
+              <th className="px-4 py-3 font-medium">Attempts</th>
+              <th className="px-4 py-3 font-medium">Claimed by</th>
+              <th className="px-4 py-3 font-medium">Next run</th>
+              <th className="px-4 py-3 font-medium">Last error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map((job) => (
+              <tr key={job.id} className="border-t border-white/8 hover:bg-white/[0.03]">
+                <td className="px-4 py-3">
+                  <span className="ui-chip">{job.kind}</span>
+                  <div className="mt-1 text-xs text-slate-500">{job.job_type}</div>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-full border px-2.5 py-1 text-xs ${statusClass(job.status)}`}>
+                    {job.status}
+                  </span>
+                </td>
+                <td className="px-4 py-3 font-mono text-xs text-slate-300">{job.submission_id || '—'}</td>
+                <td className="px-4 py-3 font-mono text-xs text-slate-300">{job.train_id ?? '—'}</td>
+                <td className="px-4 py-3 text-slate-300">{job.queue_name}</td>
+                <td className="px-4 py-3 text-slate-300">
+                  {job.attempts}/{job.max_attempts}
+                </td>
+                <td className="px-4 py-3 text-slate-300">{job.claimed_by || '—'}</td>
+                <td className="px-4 py-3 text-slate-300">{fmtDate(job.next_run_at)}</td>
+                <td className="px-4 py-3 text-slate-300">
+                  <div className="max-w-[24rem] whitespace-pre-wrap break-words">
+                    {job.last_error || '—'}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [isAuthed, setIsAuthed] = useState(
     () => localStorage.getItem(STORAGE_KEYS.auth) === 'true',
@@ -383,6 +449,9 @@ function App() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null)
   const [leaderboardLoading, setLeaderboardLoading] = useState(false)
+  const [jobs, setJobs] = useState<BackendJobQueueOut[]>([])
+  const [jobsError, setJobsError] = useState<string | null>(null)
+  const [jobsLoading, setJobsLoading] = useState(false)
   const [submissionId, setSubmissionId] = useState(
     localStorage.getItem(STORAGE_KEYS.submissionId) || '',
   )
@@ -451,19 +520,28 @@ function App() {
 
   const refreshDashboard = async () => {
     setLeaderboardLoading(true)
+    setJobsLoading(true)
     setHealthError(null)
     setLeaderboardError(null)
+    setJobsError(null)
     try {
-      const [health, board] = await Promise.all([fetchHealth(), fetchLeaderboard(50)])
+      const [health, board, queue] = await Promise.all([
+        fetchHealth(),
+        fetchLeaderboard(50),
+        fetchQueuedJobs(),
+      ])
       setHealthStatus(health.status)
       setLeaderboard(board)
+      setJobs(queue)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setHealthError(message)
       setHealthStatus('error')
       setLeaderboardError(message)
+      setJobsError(message)
     } finally {
       setLeaderboardLoading(false)
+      setJobsLoading(false)
     }
   }
 
@@ -663,6 +741,30 @@ function App() {
             </div>
           </div>
         </section>
+
+        <Section
+          eyebrow="Worker queue"
+          title="Queued jobs"
+          description="Live job rows pulled from the backend queue. Submission jobs, train jobs, and evaluation jobs are shown together so you can see what is waiting, what is running, and what failed."
+          actions={
+            <Button variant="quiet" onClick={() => void refreshDashboard()} icon={<RefreshCw className="h-4 w-4" />}>
+              Refresh jobs
+            </Button>
+          }
+        >
+          {jobsError ? (
+            <div className="mb-4 rounded-lg border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              {jobsError}
+            </div>
+          ) : null}
+          {jobsLoading && !jobs.length ? (
+            <div className="rounded-lg border border-dashed border-white/10 bg-white/3 px-4 py-5 text-sm text-slate-400">
+              Loading queued jobs…
+            </div>
+          ) : (
+            <JobTable jobs={jobs} />
+          )}
+        </Section>
 
         <Section
           eyebrow="Control plane"

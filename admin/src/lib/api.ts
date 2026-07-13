@@ -187,6 +187,33 @@ export interface BackendSubmissionOut {
   trains: BackendTrainOut[]
 }
 
+export interface BackendJobQueueOut {
+  id: string
+  job_type: string
+  kind: string
+  job_id: string
+  submission_id: string | null
+  train_id: number | null
+  queue_name: string
+  status: string
+  priority: number
+  dedupe_key: string | null
+  claimed_by: string | null
+  claimed_at: string | null
+  heartbeat_at: string | null
+  attempts: number
+  max_attempts: number
+  next_run_at: string | null
+  last_error: string | null
+  payload: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+interface BackendJobQueueResponse {
+  items: BackendJobQueueOut[]
+}
+
 export async function fetchSubmission(submissionId: string): Promise<BackendSubmissionOut> {
   const response = await fetch(apiUrl(`/api/submissions/${submissionId}`), {
     headers: {
@@ -199,6 +226,30 @@ export async function fetchSubmission(submissionId: string): Promise<BackendSubm
   }
 
   return (await response.json()) as BackendSubmissionOut
+}
+
+export async function fetchQueuedJobs(
+  status = 'queued,running',
+  jobType?: string,
+  limit = 100,
+): Promise<BackendJobQueueOut[]> {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (jobType) params.set('job_type', jobType)
+  params.set('limit', `${limit}`)
+
+  const response = await fetch(apiUrl(`/api/jobs?${params.toString()}`), {
+    headers: {
+      Accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Jobs request failed with status ${response.status}`)
+  }
+
+  const payload = (await response.json()) as BackendJobQueueResponse
+  return payload.items
 }
 
 export async function fetchEvaluation(evaluationId: string): Promise<BackendEvaluationOut> {
