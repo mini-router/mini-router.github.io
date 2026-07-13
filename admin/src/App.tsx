@@ -28,14 +28,21 @@ import {
 } from 'lucide-react'
 import {
   API_BASE_URL,
+  ApiError,
+  clearAdminAuthToken,
   createTrainJob,
+  fetchAdminLogin,
+  fetchAdminLogout,
+  fetchAdminMe,
   fetchEvaluation,
   fetchHealth,
   fetchLeaderboard,
   fetchQueuedJobs,
   fetchSubmission,
+  getAdminAuthToken,
   resetApiBaseUrl,
   setApiBaseUrl,
+  setAdminAuthToken,
   submitCheckpoint,
 } from './lib/api'
 import type {
@@ -51,18 +58,13 @@ type StatusTone = 'ok' | 'warn' | 'bad' | 'idle'
 const BENCHMARK_OPTIONS = ['math500', 'mmlu', 'gsm8k', 'humaneval', 'bbh', 'livecodebench']
 
 const STORAGE_KEYS = {
-  auth: 'minirouter.admin.auth',
+  authToken: 'minirouter.admin.token',
   authUser: 'minirouter.admin.authUser',
   apiBase: 'minirouter.admin.apiBase',
   submissionId: 'minirouter.admin.submissionId',
   evaluationId: 'minirouter.admin.evaluationId',
   trainSubmissionId: 'minirouter.admin.trainSubmissionId',
   benchmarkNames: 'minirouter.admin.trainBenchmarks',
-}
-
-const ADMIN_LOGIN = {
-  username: 'minirouteryama',
-  password: 'minirouterstrongpass@333',
 }
 
 function fmtNum(value: number | null | undefined, digits = 2): string {
@@ -459,8 +461,10 @@ function QueueFilterButton({
 }
 
 function App() {
-  const [isAuthed, setIsAuthed] = useState(
-    () => localStorage.getItem(STORAGE_KEYS.auth) === 'true',
+  const [isAuthed, setIsAuthed] = useState(() => Boolean(getAdminAuthToken()))
+  const [isCheckingSession, setIsCheckingSession] = useState(true)
+  const [adminUser, setAdminUser] = useState(
+    () => localStorage.getItem(STORAGE_KEYS.authUser) || '',
   )
   const [loginUsername, setLoginUsername] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
@@ -505,24 +509,40 @@ function App() {
   const [submissionNote, setSubmissionNote] = useState<string | null>(null)
   const [submissionUploadLoading, setSubmissionUploadLoading] = useState(false)
 
-  const handleLogin = () => {
-    if (loginUsername === ADMIN_LOGIN.username && loginPassword === ADMIN_LOGIN.password) {
-      localStorage.setItem(STORAGE_KEYS.auth, 'true')
-      localStorage.setItem(STORAGE_KEYS.authUser, loginUsername)
-      setIsAuthed(true)
-      setLoginError(null)
-      setLoginPassword('')
-      return
-    }
-    setLoginError('Invalid username or password.')
-  }
-
-  const handleLogout = () => {
-    localStorage.removeItem(STORAGE_KEYS.auth)
+  const handleLogout = useCallback(async () => {
+    await fetchAdminLogout().catch(() => undefined)
+    clearAdminAuthToken()
     localStorage.removeItem(STORAGE_KEYS.authUser)
     setIsAuthed(false)
+    setAdminUser('')
     setLoginPassword('')
     setLoginError(null)
+  }, [])
+
+  const expireSession = useCallback(async () => {
+    await handleLogout()
+    setLoginError('Session expired. Sign in again.')
+  }, [handleLogout])
+
+  const handleLogin = async () => {
+    setLoginError(null)
+    try {
+      const result = await fetchAdminLogin({
+        username: loginUsername.trim(),
+        password: loginPassword,
+      })
+      setAdminAuthToken(result.access_token)
+      localStorage.setItem(STORAGE_KEYS.authUser, result.username)
+      setAdminUser(result.username)
+      setIsAuthed(true)
+      setLoginPassword('')
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        setLoginError('Invalid username or password.')
+      } else {
+        setLoginError(error instanceof Error ? error.message : String(error))
+      }
+    }
   }
 
   useEffect(() => {
@@ -545,6 +565,29 @@ function App() {
     localStorage.setItem(STORAGE_KEYS.benchmarkNames, trainBenchmarks)
   }, [trainBenchmarks])
 
+  useEffect(() => {
+    const validateSession = async () => {
+      const token = getAdminAuthToken()
+      if (!token) {
+        setIsCheckingSession(false)
+        return
+      }
+      try {
+        const me = await fetchAdminMe()
+        localStorage.setItem(STORAGE_KEYS.authUser, me.username)
+        setAdminUser(me.username)
+        setIsAuthed(true)
+      } catch {
+        clearAdminAuthToken()
+        localStorage.removeItem(STORAGE_KEYS.authUser)
+        setIsAuthed(false)
+      } finally {
+        setIsCheckingSession(false)
+      }
+    }
+    void validateSession()
+  }, [])
+
   const refreshDashboard = useCallback(async () => {
     setLeaderboardLoading(true)
     setJobsLoading(true)
@@ -562,6 +605,10 @@ function App() {
       setLeaderboard(board)
       setJobs(queue)
     } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       setHealthError(message)
       setHealthStatus('error')
@@ -571,11 +618,12 @@ function App() {
       setLeaderboardLoading(false)
       setJobsLoading(false)
     }
-  }, [jobsFilter])
+  }, [jobsFilter, expireSession])
 
   useEffect(() => {
+    if (!isAuthed || isCheckingSession) return
     void refreshDashboard()
-  }, [refreshDashboard])
+  }, [isAuthed, isCheckingSession, refreshDashboard])
 
   const loadSubmission = async () => {
     const id = submissionId.trim()
@@ -587,7 +635,11 @@ function App() {
       setSubmission(data)
     } catch (error) {
       setSubmission(null)
-      setSubmissionError(error instanceof Error ? error.message : String(error))
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setSubmissionError(error instanceof Error ? error.message : String(error))
+      }
     } finally {
       setSubmissionLoading(false)
     }
@@ -603,7 +655,11 @@ function App() {
       setEvaluation(data)
     } catch (error) {
       setEvaluation(null)
-      setEvaluationError(error instanceof Error ? error.message : String(error))
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setEvaluationError(error instanceof Error ? error.message : String(error))
+      }
     } finally {
       setEvaluationLoading(false)
     }
@@ -625,7 +681,11 @@ function App() {
       setTrainNote(`Queued train job #${result.train.id} (${result.train.status}).`)
       await refreshDashboard()
     } catch (error) {
-      setTrainNote(error instanceof Error ? error.message : String(error))
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setTrainNote(error instanceof Error ? error.message : String(error))
+      }
     } finally {
       setTrainLoading(false)
     }
@@ -648,7 +708,11 @@ function App() {
       setSubmission(result.submission)
       await refreshDashboard()
     } catch (error) {
-      setSubmissionNote(error instanceof Error ? error.message : String(error))
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setSubmissionNote(error instanceof Error ? error.message : String(error))
+      }
     } finally {
       setSubmissionUploadLoading(false)
     }
@@ -664,6 +728,17 @@ function App() {
       topScore: fmtPct(top?.accuracy ?? null),
     }
   }, [leaderboard])
+
+  if (isCheckingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-6 text-slate-300">
+        <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+          <LoaderCircle className="h-4 w-4 animate-spin" />
+          <span className="text-sm">Checking admin session…</span>
+        </div>
+      </div>
+    )
+  }
 
   if (!isAuthed) {
     return (
@@ -706,7 +781,7 @@ function App() {
 
             <div className="flex flex-wrap items-center gap-2">
               <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
-                User: <span className="font-mono text-slate-100">{localStorage.getItem(STORAGE_KEYS.authUser) || 'admin'}</span>
+                User: <span className="font-mono text-slate-100">{adminUser || 'admin'}</span>
               </div>
               <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
                 API: <span className="font-mono text-slate-100">{API_BASE_URL()}</span>

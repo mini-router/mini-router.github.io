@@ -1,10 +1,13 @@
 import type { LeaderboardEntry } from '../types'
 
 const DEFAULT_API_BASE_URL = 'https://minirouter.work.gd'
+const ADMIN_TOKEN_STORAGE_KEY = 'minirouter.admin.token'
+const ADMIN_API_PREFIX = '/api/admin'
 
 let runtimeApiBaseUrl = (
   import.meta.env.VITE_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL
 ).replace(/\/+$/, '')
+let runtimeAdminToken = readStoredAdminToken()
 
 export const API_BASE_URL = (): string => runtimeApiBaseUrl
 
@@ -26,6 +29,82 @@ export function apiUrl(path: string): string {
 
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   return `${runtimeApiBaseUrl}${normalizedPath}`
+}
+
+function readStoredAdminToken(): string {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+  return window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY)?.trim() || ''
+}
+
+function persistAdminToken(token: string): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  if (token) {
+    window.localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token)
+  } else {
+    window.localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY)
+  }
+}
+
+export function getAdminAuthToken(): string {
+  return runtimeAdminToken || readStoredAdminToken()
+}
+
+export function setAdminAuthToken(token: string): void {
+  runtimeAdminToken = token.trim()
+  persistAdminToken(runtimeAdminToken)
+}
+
+export function clearAdminAuthToken(): void {
+  runtimeAdminToken = ''
+  persistAdminToken('')
+}
+
+export class ApiError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+function authHeaders(): HeadersInit {
+  const token = getAdminAuthToken()
+  if (!token) {
+    return {}
+  }
+  return { Authorization: `Bearer ${token}` }
+}
+
+async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers || {})
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json')
+  }
+  const token = getAdminAuthToken()
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    headers,
+  })
+  if (!response.ok) {
+    const message = await response.text().catch(() => '')
+    throw new ApiError(
+      message || `${init.method || 'GET'} request failed with status ${response.status}`,
+      response.status,
+    )
+  }
+  if (response.status === 204) {
+    return undefined as T
+  }
+  return (await response.json()) as T
 }
 
 interface BackendLeaderboardEntry {
@@ -72,15 +151,7 @@ function normalizeLeaderboardEntry(entry: BackendLeaderboardEntry): LeaderboardE
 }
 
 export async function fetchLeaderboard(limit = 100): Promise<LeaderboardEntry[]> {
-  const response = await fetch(apiUrl(`/api/leaderboard?limit=${limit}`), {
-    headers: { Accept: 'application/json' },
-  })
-
-  if (!response.ok) {
-    throw new Error(`Leaderboard request failed with status ${response.status}`)
-  }
-
-  const payload = (await response.json()) as BackendLeaderboardResponse
+  const payload = await requestJson<BackendLeaderboardResponse>(`${ADMIN_API_PREFIX}/leaderboard?limit=${limit}`)
   return payload.items.map(normalizeLeaderboardEntry)
 }
 
@@ -89,13 +160,7 @@ export interface HealthResponse {
 }
 
 export async function fetchHealth(): Promise<HealthResponse> {
-  const response = await fetch(apiUrl('/health'), {
-    headers: { Accept: 'application/json' },
-  })
-  if (!response.ok) {
-    throw new Error(`Health request failed with status ${response.status}`)
-  }
-  return (await response.json()) as HealthResponse
+  return requestJson<HealthResponse>('/health')
 }
 
 export interface BackendEvaluationOut {
@@ -215,17 +280,7 @@ interface BackendJobQueueResponse {
 }
 
 export async function fetchSubmission(submissionId: string): Promise<BackendSubmissionOut> {
-  const response = await fetch(apiUrl(`/api/submissions/${submissionId}`), {
-    headers: {
-      Accept: 'application/json',
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error(`Submission request failed with status ${response.status}`)
-  }
-
-  return (await response.json()) as BackendSubmissionOut
+  return requestJson<BackendSubmissionOut>(`${ADMIN_API_PREFIX}/submissions/${submissionId}`)
 }
 
 export async function fetchQueuedJobs(
@@ -238,30 +293,54 @@ export async function fetchQueuedJobs(
   if (jobType) params.set('job_type', jobType)
   params.set('limit', `${limit}`)
 
-  const response = await fetch(apiUrl(`/api/jobs?${params.toString()}`), {
-    headers: {
-      Accept: 'application/json',
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error(`Jobs request failed with status ${response.status}`)
-  }
-
-  const payload = (await response.json()) as BackendJobQueueResponse
+  const payload = await requestJson<BackendJobQueueResponse>(
+    `${ADMIN_API_PREFIX}/jobs?${params.toString()}`,
+  )
   return payload.items
 }
 
 export async function fetchEvaluation(evaluationId: string): Promise<BackendEvaluationOut> {
-  const response = await fetch(apiUrl(`/api/evaluations/${evaluationId}`), {
-    headers: { Accept: 'application/json' },
+  return requestJson<BackendEvaluationOut>(`${ADMIN_API_PREFIX}/evaluations/${evaluationId}`)
+}
+
+export interface AdminLoginRequest {
+  username: string
+  password: string
+}
+
+export interface AdminLoginResponse {
+  access_token: string
+  token_type: string
+  username: string
+  expires_at: string
+}
+
+export interface AdminMeResponse {
+  username: string
+}
+
+export async function fetchAdminLogin(payload: AdminLoginRequest): Promise<AdminLoginResponse> {
+  const response = await fetch(apiUrl(`${ADMIN_API_PREFIX}/login`), {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
   })
-
   if (!response.ok) {
-    throw new Error(`Evaluation request failed with status ${response.status}`)
+    const message = await response.text().catch(() => '')
+    throw new ApiError(message || `Login request failed with status ${response.status}`, response.status)
   }
+  return (await response.json()) as AdminLoginResponse
+}
 
-  return (await response.json()) as BackendEvaluationOut
+export async function fetchAdminMe(): Promise<AdminMeResponse> {
+  return requestJson<AdminMeResponse>(`${ADMIN_API_PREFIX}/me`)
+}
+
+export async function fetchAdminLogout(): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(`${ADMIN_API_PREFIX}/logout`, { method: 'POST' })
 }
 
 export interface TrainCreateRequest {
@@ -276,17 +355,19 @@ export interface TrainCreateResponse {
 }
 
 export async function createTrainJob(payload: TrainCreateRequest): Promise<TrainCreateResponse> {
-  const response = await fetch(apiUrl('/api/trains'), {
+  const response = await fetch(apiUrl(`${ADMIN_API_PREFIX}/trains`), {
     method: 'POST',
     headers: {
       Accept: 'application/json',
+      ...authHeaders(),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
   })
 
   if (!response.ok) {
-    throw new Error(`Train request failed with status ${response.status}`)
+    const message = await response.text().catch(() => '')
+    throw new ApiError(message || `Train request failed with status ${response.status}`, response.status)
   }
 
   return (await response.json()) as TrainCreateResponse
@@ -315,13 +396,20 @@ export async function submitCheckpoint(payload: SubmissionUploadRequest): Promis
   }
   if (payload.head_sha) form.append('head_sha', payload.head_sha)
 
-  const response = await fetch(apiUrl('/submit'), {
+  const response = await fetch(apiUrl(`${ADMIN_API_PREFIX}/submit`), {
     method: 'POST',
+    headers: {
+      ...authHeaders(),
+    },
     body: form,
   })
 
   if (!response.ok) {
-    throw new Error(`Submission request failed with status ${response.status}`)
+    const message = await response.text().catch(() => '')
+    throw new ApiError(
+      message || `Submission request failed with status ${response.status}`,
+      response.status,
+    )
   }
 
   return (await response.json()) as SubmissionCreateResponse
