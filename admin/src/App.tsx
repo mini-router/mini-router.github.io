@@ -44,11 +44,18 @@ type StatusTone = 'ok' | 'warn' | 'bad' | 'idle'
 const BENCHMARK_OPTIONS = ['math500', 'mmlu', 'gsm8k', 'humaneval', 'bbh', 'livecodebench']
 
 const STORAGE_KEYS = {
+  auth: 'minirouter.admin.auth',
+  authUser: 'minirouter.admin.authUser',
   apiBase: 'minirouter.admin.apiBase',
   submissionId: 'minirouter.admin.submissionId',
   evaluationId: 'minirouter.admin.evaluationId',
   trainSubmissionId: 'minirouter.admin.trainSubmissionId',
   benchmarkNames: 'minirouter.admin.trainBenchmarks',
+}
+
+const ADMIN_LOGIN = {
+  username: 'minirouteryama',
+  password: 'minirouterstrongpass@333',
 }
 
 function fmtNum(value: number | null | undefined, digits = 2): string {
@@ -234,6 +241,70 @@ function CopyButton({ value }: { value: string }) {
   )
 }
 
+function LoginScreen({
+  username,
+  setUsername,
+  password,
+  setPassword,
+  error,
+  onLogin,
+}: {
+  username: string
+  setUsername: (value: string) => void
+  password: string
+  setPassword: (value: string) => void
+  error: string | null
+  onLogin: () => void
+}) {
+  return (
+    <div className="flex min-h-screen items-center justify-center px-5 py-10">
+      <div className="panel w-full max-w-md p-6">
+        <div className="flex items-center gap-3">
+          <img
+            src="/mini-router.jpg"
+            alt="MiniRouter"
+            className="h-12 w-12 rounded-lg border border-white/10 object-cover"
+          />
+          <div>
+            <div className="section-kicker">Admin access</div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-50">MiniRouter Admin</h1>
+          </div>
+        </div>
+        <p className="mt-4 text-sm leading-6 text-slate-400">
+          Sign in to manage training, submissions, evaluation queues, and the database dashboard.
+        </p>
+        <div className="mt-6 space-y-4">
+          <Field label="Username">
+            <Input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+          </Field>
+          <Field label="Password">
+            <Input
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              type="password"
+              autoComplete="current-password"
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  onLogin()
+                }
+              }}
+            />
+          </Field>
+        </div>
+        {error ? (
+          <div className="mt-4 rounded-lg border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+            {error}
+          </div>
+        ) : null}
+        <Button className="mt-6 w-full" onClick={onLogin}>
+          Sign in
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function RunTable({
   label,
   runs,
@@ -296,6 +367,12 @@ function RunTable({
 }
 
 function App() {
+  const [isAuthed, setIsAuthed] = useState(
+    () => localStorage.getItem(STORAGE_KEYS.auth) === 'true',
+  )
+  const [loginUsername, setLoginUsername] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState<string | null>(null)
   const initialBase =
     localStorage.getItem(STORAGE_KEYS.apiBase)?.trim() ||
     import.meta.env.VITE_API_BASE_URL?.trim() ||
@@ -331,6 +408,26 @@ function App() {
   const [teamName, setTeamName] = useState('')
   const [submissionNote, setSubmissionNote] = useState<string | null>(null)
   const [submissionUploadLoading, setSubmissionUploadLoading] = useState(false)
+
+  const handleLogin = () => {
+    if (loginUsername === ADMIN_LOGIN.username && loginPassword === ADMIN_LOGIN.password) {
+      localStorage.setItem(STORAGE_KEYS.auth, 'true')
+      localStorage.setItem(STORAGE_KEYS.authUser, loginUsername)
+      setIsAuthed(true)
+      setLoginError(null)
+      setLoginPassword('')
+      return
+    }
+    setLoginError('Invalid username or password.')
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem(STORAGE_KEYS.auth)
+    localStorage.removeItem(STORAGE_KEYS.authUser)
+    setIsAuthed(false)
+    setLoginPassword('')
+    setLoginError(null)
+  }
 
   useEffect(() => {
     setApiBaseUrl(apiBaseInput)
@@ -462,6 +559,19 @@ function App() {
     }
   }, [leaderboard])
 
+  if (!isAuthed) {
+    return (
+      <LoginScreen
+        username={loginUsername}
+        setUsername={setLoginUsername}
+        password={loginPassword}
+        setPassword={setLoginPassword}
+        error={loginError}
+        onLogin={handleLogin}
+      />
+    )
+  }
+
   return (
     <div className="min-h-screen text-slate-100">
       <header className="sticky top-0 z-20 border-b border-white/8 bg-slate-950/75 backdrop-blur-xl">
@@ -490,6 +600,9 @@ function App() {
 
             <div className="flex flex-wrap items-center gap-2">
               <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
+                User: <span className="font-mono text-slate-100">{localStorage.getItem(STORAGE_KEYS.authUser) || 'admin'}</span>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
                 API: <span className="font-mono text-slate-100">{API_BASE_URL()}</span>
               </div>
               <Button
@@ -508,6 +621,9 @@ function App() {
                 icon={<Wrench className="h-4 w-4" />}
               >
                 Reset API
+              </Button>
+              <Button variant="quiet" onClick={handleLogout} icon={<ShieldCheck className="h-4 w-4" />}>
+                Logout
               </Button>
             </div>
           </div>
