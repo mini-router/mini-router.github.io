@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -432,6 +433,31 @@ function JobTable({ jobs }: { jobs: BackendJobQueueOut[] }) {
   )
 }
 
+function QueueFilterButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean
+  children: ReactNode
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+        active
+          ? 'border-cyan-400/40 bg-cyan-400/15 text-cyan-100'
+          : 'border-white/10 bg-white/5 text-slate-300 hover:border-cyan-400/30 hover:bg-cyan-400/10 hover:text-cyan-100',
+      ].join(' ')}
+    >
+      {children}
+    </button>
+  )
+}
+
 function App() {
   const [isAuthed, setIsAuthed] = useState(
     () => localStorage.getItem(STORAGE_KEYS.auth) === 'true',
@@ -452,6 +478,7 @@ function App() {
   const [jobs, setJobs] = useState<BackendJobQueueOut[]>([])
   const [jobsError, setJobsError] = useState<string | null>(null)
   const [jobsLoading, setJobsLoading] = useState(false)
+  const [jobsFilter, setJobsFilter] = useState<'all' | 'submission' | 'train' | 'evaluation'>('all')
   const [submissionId, setSubmissionId] = useState(
     localStorage.getItem(STORAGE_KEYS.submissionId) || '',
   )
@@ -518,17 +545,18 @@ function App() {
     localStorage.setItem(STORAGE_KEYS.benchmarkNames, trainBenchmarks)
   }, [trainBenchmarks])
 
-  const refreshDashboard = async () => {
+  const refreshDashboard = useCallback(async () => {
     setLeaderboardLoading(true)
     setJobsLoading(true)
     setHealthError(null)
     setLeaderboardError(null)
     setJobsError(null)
     try {
+      const jobType = jobsFilter === 'all' ? undefined : jobsFilter
       const [health, board, queue] = await Promise.all([
         fetchHealth(),
         fetchLeaderboard(50),
-        fetchQueuedJobs(),
+        fetchQueuedJobs('queued,running', jobType, 100),
       ])
       setHealthStatus(health.status)
       setLeaderboard(board)
@@ -543,11 +571,11 @@ function App() {
       setLeaderboardLoading(false)
       setJobsLoading(false)
     }
-  }
+  }, [jobsFilter])
 
   useEffect(() => {
     void refreshDashboard()
-  }, [])
+  }, [refreshDashboard])
 
   const loadSubmission = async () => {
     const id = submissionId.trim()
@@ -747,9 +775,23 @@ function App() {
           title="Queued jobs"
           description="Live job rows pulled from the backend queue. Submission jobs, train jobs, and evaluation jobs are shown together so you can see what is waiting, what is running, and what failed."
           actions={
-            <Button variant="quiet" onClick={() => void refreshDashboard()} icon={<RefreshCw className="h-4 w-4" />}>
-              Refresh jobs
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <QueueFilterButton active={jobsFilter === 'all'} onClick={() => setJobsFilter('all')}>
+                All
+              </QueueFilterButton>
+              <QueueFilterButton active={jobsFilter === 'submission'} onClick={() => setJobsFilter('submission')}>
+                Submission
+              </QueueFilterButton>
+              <QueueFilterButton active={jobsFilter === 'train'} onClick={() => setJobsFilter('train')}>
+                Train
+              </QueueFilterButton>
+              <QueueFilterButton active={jobsFilter === 'evaluation'} onClick={() => setJobsFilter('evaluation')}>
+                Evaluation
+              </QueueFilterButton>
+              <Button variant="quiet" onClick={() => void refreshDashboard()} icon={<RefreshCw className="h-4 w-4" />}>
+                Refresh jobs
+              </Button>
+            </div>
           }
         >
           {jobsError ? (
