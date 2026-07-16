@@ -322,6 +322,7 @@ export interface AdminMeResponse {
 export interface AdminRuntimeConfig {
   benchmark_names: string[]
   eval_max_items: number
+  eval_batch_size: number
   eval_provider: string
   eval_models_config: string
   eval_execution_mode: string
@@ -331,6 +332,7 @@ export interface AdminRuntimeConfig {
 export interface AdminRuntimeConfigUpdate {
   benchmark_names: string[]
   eval_max_items: number
+  eval_batch_size: number
   eval_provider: string
   eval_models_config: string
   eval_execution_mode: string
