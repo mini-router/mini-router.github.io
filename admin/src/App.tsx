@@ -519,6 +519,7 @@ function App() {
   const [jobsFilter, setJobsFilter] = useState<'all' | 'submission' | 'train' | 'evaluation'>('all')
   const [runtimeBenchmarks, setRuntimeBenchmarks] = useState<string[]>(['math500'])
   const [runtimeMaxItems, setRuntimeMaxItems] = useState(20)
+  const [runtimeBatchSize, setRuntimeBatchSize] = useState(1)
   const [runtimeProvider, setRuntimeProvider] = useState('chutes')
   const [runtimeModelsConfig, setRuntimeModelsConfig] = useState('configs/models.chutes.light.yaml')
   const [runtimeExecutionMode, setRuntimeExecutionMode] = useState('remote_gpu')
@@ -606,12 +607,14 @@ function App() {
       const result = await updateAdminConfig({
         benchmark_names: runtimeBenchmarks,
         eval_max_items: runtimeMaxItems,
+        eval_batch_size: runtimeBatchSize,
         eval_provider: runtimeProvider,
         eval_models_config: runtimeModelsConfig,
         eval_execution_mode: runtimeExecutionMode,
       })
       setRuntimeBenchmarks(result.benchmark_names.length ? result.benchmark_names : ['math500'])
       setRuntimeMaxItems(result.eval_max_items)
+      setRuntimeBatchSize(result.eval_batch_size || 1)
       setRuntimeProvider(result.eval_provider)
       setRuntimeModelsConfig(result.eval_models_config)
       setRuntimeExecutionMode(result.eval_execution_mode || 'remote_gpu')
@@ -671,6 +674,7 @@ function App() {
       const config = await fetchAdminConfig()
       setRuntimeBenchmarks(config.benchmark_names?.length ? config.benchmark_names : ['math500'])
       setRuntimeMaxItems(config.eval_max_items)
+      setRuntimeBatchSize(config.eval_batch_size || 1)
       setRuntimeProvider(config.eval_provider)
       setRuntimeModelsConfig(config.eval_models_config)
       setRuntimeExecutionMode(config.eval_execution_mode || 'remote_gpu')
@@ -1016,7 +1020,7 @@ function App() {
           }
         >
           <div className="panel p-5">
-            <div className="grid gap-4 xl:grid-cols-[1.4fr_0.9fr_1fr_1fr_1fr]">
+            <div className="grid gap-4 xl:grid-cols-[1.4fr_0.85fr_0.85fr_1fr_1fr_1fr]">
               <Field
                 label="Benchmark list"
                 help="The current evaluator uses the first selected benchmark as the active runtime benchmark."
@@ -1045,6 +1049,14 @@ function App() {
                   min={1}
                   value={runtimeMaxItems}
                   onChange={(event) => setRuntimeMaxItems(Math.max(1, Number(event.target.value) || 1))}
+                />
+              </Field>
+              <Field label="Batch size" help="Number of benchmark items evaluated in parallel per batch.">
+                <Input
+                  type="number"
+                  min={1}
+                  value={runtimeBatchSize}
+                  onChange={(event) => setRuntimeBatchSize(Math.max(1, Number(event.target.value) || 1))}
                 />
               </Field>
               <Field label="Provider" help="Default provider used when queueing evaluation jobs.">
