@@ -165,7 +165,7 @@ export async function fetchHealth(): Promise<HealthResponse> {
 
 export interface BackendEvaluationOut {
   id: number
-  submission_id: string
+  submission_id: string | null
   train_id: number | null
   input_artifact_id: string | null
   status: string
@@ -259,6 +259,7 @@ export interface BackendJobQueueOut {
   job_id: string
   submission_id: string | null
   train_id: number | null
+  evaluation_id: number | null
   queue_name: string
   status: string
   priority: number
@@ -301,6 +302,12 @@ export async function fetchQueuedJobs(
 
 export async function fetchEvaluation(evaluationId: string): Promise<BackendEvaluationOut> {
   return requestJson<BackendEvaluationOut>(`${ADMIN_API_PREFIX}/evaluations/${evaluationId}`)
+}
+
+export async function fetchEvaluations(limit = 100): Promise<BackendEvaluationOut[]> {
+  return requestJson<BackendEvaluationOut[]>(
+    `${ADMIN_API_PREFIX}/evaluations?standalone_only=true&limit=${limit}`,
+  )
 }
 
 export interface AdminLoginRequest {
@@ -429,6 +436,33 @@ export async function createTrainJob(payload: TrainCreateRequest): Promise<Train
   }
 
   return (await response.json()) as TrainCreateResponse
+}
+
+export interface ProviderEvaluationCreateRequest {
+  benchmark_names: string[]
+  pool_models: string[]
+  provider: string
+  models_config: string
+  max_items: number
+  batch_size: number
+  repeat: number
+}
+
+export interface ProviderEvaluationCreateResponse {
+  evaluations: BackendEvaluationOut[]
+  job_ids: string[]
+}
+
+export async function createProviderEvaluations(
+  payload: ProviderEvaluationCreateRequest,
+): Promise<ProviderEvaluationCreateResponse> {
+  return requestJson<ProviderEvaluationCreateResponse>(`${ADMIN_API_PREFIX}/provider-evaluations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
 }
 
 export interface SubmissionCreateResponse {

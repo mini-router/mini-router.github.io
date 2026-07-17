@@ -33,12 +33,14 @@ import {
   API_BASE_URL,
   ApiError,
   clearAdminAuthToken,
+  createProviderEvaluations,
   createTrainJob,
   fetchAdminLogin,
   fetchAdminLogout,
   fetchAdminConfig,
   fetchAdminMe,
   fetchEvaluation,
+  fetchEvaluations,
   fetchHealth,
   fetchLeaderboard,
   fetchQueuedJobs,
@@ -67,10 +69,20 @@ type StatusTone = 'ok' | 'warn' | 'bad' | 'idle'
 const BENCHMARK_OPTIONS = ['math500', 'mmlu', 'gsm8k', 'humaneval', 'bbh', 'livecodebench']
 
 const MODEL_SET_OPTIONS = [
+  { value: 'configs/models.openrouter-chutes.yaml', label: 'OpenRouter + Chutes' },
   { value: 'configs/models.chutes.light.yaml', label: 'Chutes light' },
   { value: 'configs/models.openrouter.light.yaml', label: 'OpenRouter light' },
   { value: 'configs/models.chutes.yaml', label: 'Chutes full' },
   { value: 'configs/models.openrouter.yaml', label: 'OpenRouter full' },
+]
+
+const PROVIDER_ROUTE_OPTIONS = [
+  'openrouter-deepseek-v4-pro',
+  'openrouter-glm-5',
+  'openrouter-kimi-k2p6',
+  'chutes-deepseek-v3p2',
+  'chutes-glm-5',
+  'chutes-kimi-k2p5',
 ]
 
 const EXECUTION_MODE_OPTIONS = [
@@ -469,6 +481,64 @@ function JobTable({ jobs }: { jobs: BackendJobQueueOut[] }) {
   )
 }
 
+function metricText(metrics: Record<string, unknown>, key: string): string {
+  const value = metrics[key]
+  if (typeof value === 'string') return value
+  if (typeof value === 'number') return Number.isInteger(value) ? value.toString() : value.toFixed(4)
+  return '—'
+}
+
+function ProviderEvaluationTable({ runs }: { runs: BackendEvaluationOut[] }) {
+  if (!runs.length) {
+    return (
+      <div className="rounded-lg border border-dashed border-white/10 bg-white/3 px-4 py-5 text-sm text-slate-400">
+        No standalone provider evaluations recorded yet.
+      </div>
+    )
+  }
+
+  return (
+    <div className="table-shell">
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-sm">
+          <thead className="bg-white/5 text-slate-300">
+            <tr>
+              <th className="px-4 py-3 font-medium">Eval</th>
+              <th className="px-4 py-3 font-medium">Route</th>
+              <th className="px-4 py-3 font-medium">Benchmark</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Score</th>
+              <th className="px-4 py-3 font-medium">Repeat</th>
+              <th className="px-4 py-3 font-medium">Cost</th>
+              <th className="px-4 py-3 font-medium">Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run) => (
+              <tr key={`provider-eval-${run.id}`} className="border-t border-white/8 hover:bg-white/[0.03]">
+                <td className="px-4 py-3 font-mono text-xs text-slate-200">{run.id}</td>
+                <td className="px-4 py-3 text-slate-300">{metricText(run.metrics, 'provider_route')}</td>
+                <td className="px-4 py-3 text-slate-300">
+                  {run.benchmark_names.join(', ') || metricText(run.metrics, 'benchmark')}
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-full border px-2.5 py-1 text-xs ${statusClass(run.status)}`}>
+                    {run.status}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-slate-300">{fmtPct(run.score)}</td>
+                <td className="px-4 py-3 text-slate-300">{metricText(run.metrics, 'repeat')}</td>
+                <td className="px-4 py-3 text-slate-300">{fmtNum(run.cost_usd)}</td>
+                <td className="px-4 py-3 text-slate-300">{fmtSeconds(run.duration_seconds)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 function QueueFilterButton({
   active,
   children,
@@ -525,6 +595,16 @@ function App() {
   const [runtimeExecutionMode, setRuntimeExecutionMode] = useState('remote_gpu')
   const [runtimeConfigSaving, setRuntimeConfigSaving] = useState(false)
   const [runtimeConfigNote, setRuntimeConfigNote] = useState<string | null>(null)
+  const [providerBenchmarks, setProviderBenchmarks] = useState<string[]>(['math500'])
+  const [providerRoutes, setProviderRoutes] = useState<string[]>(['openrouter-glm-5'])
+  const [providerModelsConfig, setProviderModelsConfig] = useState('configs/models.openrouter-chutes.yaml')
+  const [providerMaxItems, setProviderMaxItems] = useState(20)
+  const [providerBatchSize, setProviderBatchSize] = useState(1)
+  const [providerRepeat, setProviderRepeat] = useState(1)
+  const [providerEvalNote, setProviderEvalNote] = useState<string | null>(null)
+  const [providerEvalLoading, setProviderEvalLoading] = useState(false)
+  const [providerEvalRuns, setProviderEvalRuns] = useState<BackendEvaluationOut[]>([])
+  const [providerEvalError, setProviderEvalError] = useState<string | null>(null)
   const [reviewControl, setReviewControl] = useState<AdminReviewControl | null>(null)
   const [reviewActionLoading, setReviewActionLoading] = useState(false)
   const [reviewActionNote, setReviewActionNote] = useState<string | null>(null)
@@ -600,6 +680,26 @@ function App() {
     })
   }
 
+  const toggleProviderBenchmark = (benchmark: string) => {
+    setProviderBenchmarks((current) => {
+      if (current.includes(benchmark)) {
+        const next = current.filter((item) => item !== benchmark)
+        return next.length ? next : current
+      }
+      return [...current, benchmark]
+    })
+  }
+
+  const toggleProviderRoute = (route: string) => {
+    setProviderRoutes((current) => {
+      if (current.includes(route)) {
+        const next = current.filter((item) => item !== route)
+        return next.length ? next : current
+      }
+      return [...current, route]
+    })
+  }
+
   const saveRuntimeConfig = async () => {
     setRuntimeConfigSaving(true)
     setRuntimeConfigNote(null)
@@ -666,6 +766,34 @@ function App() {
       }
     } finally {
       setReviewActionLoading(false)
+    }
+  }
+
+  const queueProviderEvaluations = async () => {
+    setProviderEvalLoading(true)
+    setProviderEvalNote(null)
+    setProviderEvalError(null)
+    try {
+      const result = await createProviderEvaluations({
+        benchmark_names: providerBenchmarks,
+        pool_models: providerRoutes,
+        provider: 'compatible',
+        models_config: providerModelsConfig,
+        max_items: providerMaxItems,
+        batch_size: providerBatchSize,
+        repeat: providerRepeat,
+      })
+      setProviderEvalNote(`Queued ${result.evaluations.length} provider evaluation jobs.`)
+      setProviderEvalRuns((current) => [...result.evaluations, ...current].slice(0, 100))
+      await refreshDashboard()
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setProviderEvalError(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      setProviderEvalLoading(false)
     }
   }
 
@@ -749,18 +877,21 @@ function App() {
     setHealthError(null)
     setLeaderboardError(null)
     setJobsError(null)
+    setProviderEvalError(null)
     try {
       const jobType = jobsFilter === 'all' ? undefined : jobsFilter
-      const [health, board, queue, review] = await Promise.all([
+      const [health, board, queue, review, providerRuns] = await Promise.all([
         fetchHealth(),
         fetchLeaderboard(50),
         fetchQueuedJobs('queued,running', jobType, 100),
         fetchReviewControl(),
+        fetchEvaluations(100),
       ])
       setHealthStatus(health.status)
       setLeaderboard(board)
       setJobs(queue)
       setReviewControl(review)
+      setProviderEvalRuns(providerRuns)
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         await expireSession()
@@ -771,6 +902,7 @@ function App() {
       setHealthStatus('error')
       setLeaderboardError(message)
       setJobsError(message)
+      setProviderEvalError(message)
     } finally {
       setLeaderboardLoading(false)
       setJobsLoading(false)
@@ -1099,6 +1231,110 @@ function App() {
                 {runtimeConfigNote}
               </div>
             ) : null}
+          </div>
+        </Section>
+
+        <Section
+          eyebrow="Provider tests"
+          title="Single provider benchmark tests"
+          description="Queue direct single-route evaluations. Each selected provider route and benchmark pair is saved as its own evaluation row."
+          actions={
+            <Button
+              onClick={() => void queueProviderEvaluations()}
+              disabled={providerEvalLoading}
+              icon={providerEvalLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}
+            >
+              Queue tests
+            </Button>
+          }
+        >
+          <div className="panel p-5">
+            <div className="grid gap-4 xl:grid-cols-[1.2fr_1.4fr_1fr_0.7fr_0.7fr_0.7fr]">
+              <Field label="Benchmarks" help="Each selected benchmark gets an individual evaluation row per provider route.">
+                <div className="flex flex-wrap gap-2">
+                  {BENCHMARK_OPTIONS.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => toggleProviderBenchmark(item)}
+                      className={[
+                        'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                        providerBenchmarks.includes(item)
+                          ? 'border-cyan-400/40 bg-cyan-400/15 text-cyan-100'
+                          : 'border-white/10 bg-white/5 text-slate-300 hover:border-cyan-400/30 hover:bg-cyan-400/10 hover:text-cyan-100',
+                      ].join(' ')}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              <Field label="Provider routes" help="Routes are backend + logical model, for example openrouter-glm-5.">
+                <div className="flex flex-wrap gap-2">
+                  {PROVIDER_ROUTE_OPTIONS.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => toggleProviderRoute(item)}
+                      className={[
+                        'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                        providerRoutes.includes(item)
+                          ? 'border-lime-400/40 bg-lime-400/15 text-lime-100'
+                          : 'border-white/10 bg-white/5 text-slate-300 hover:border-lime-400/30 hover:bg-lime-400/10 hover:text-lime-100',
+                      ].join(' ')}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              <Field label="Model config">
+                <Select value={providerModelsConfig} onChange={(event) => setProviderModelsConfig(event.target.value)}>
+                  {MODEL_SET_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Max items">
+                <Input
+                  type="number"
+                  min={1}
+                  value={providerMaxItems}
+                  onChange={(event) => setProviderMaxItems(Math.max(1, Number(event.target.value) || 1))}
+                />
+              </Field>
+              <Field label="Batch size">
+                <Input
+                  type="number"
+                  min={1}
+                  value={providerBatchSize}
+                  onChange={(event) => setProviderBatchSize(Math.max(1, Number(event.target.value) || 1))}
+                />
+              </Field>
+              <Field label="Repeat">
+                <Input
+                  type="number"
+                  min={1}
+                  value={providerRepeat}
+                  onChange={(event) => setProviderRepeat(Math.max(1, Number(event.target.value) || 1))}
+                />
+              </Field>
+            </div>
+            {providerEvalNote ? (
+              <div className="mt-4 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+                {providerEvalNote}
+              </div>
+            ) : null}
+            {providerEvalError ? (
+              <div className="mt-4 rounded-lg border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+                {providerEvalError}
+              </div>
+            ) : null}
+          </div>
+          <div className="mt-4">
+            <ProviderEvaluationTable runs={providerEvalRuns} />
           </div>
         </Section>
 
