@@ -69,6 +69,7 @@ import type {
   AdminReviewControl,
 } from './lib/api'
 import type { LeaderboardEntry } from './types'
+import { CostVsScoreChart, ScoreByModelChart, type ProviderBenchmarkPoint } from './components/ProviderBenchmarkChart'
 
 type StatusTone = 'ok' | 'warn' | 'bad' | 'idle'
 
@@ -1185,6 +1186,21 @@ function App() {
     }
   }, [leaderboard])
 
+  const providerBenchmarkPoints: ProviderBenchmarkPoint[] = useMemo(
+    () =>
+      providerEvalRuns
+        .filter((run) => !run.deleted_at)
+        .map((run) => ({
+          id: run.id,
+          route: metricText(run.metrics, 'provider_route'),
+          benchmark: run.benchmark_names.join(', ') || metricText(run.metrics, 'benchmark'),
+          score: run.score,
+          cost_usd: run.cost_usd,
+          duration_seconds: run.duration_seconds,
+        })),
+    [providerEvalRuns],
+  )
+
   if (isCheckingSession) {
     return (
       <div className="flex min-h-screen items-center justify-center px-6 text-slate-300">
@@ -1506,6 +1522,22 @@ function App() {
               deletingId={deletingEvaluationId}
             />
           </div>
+        </Section>
+
+        <Section
+          eyebrow="Provider tests"
+          title="Score by model"
+          description="Scores from the provider benchmark table above, grouped by benchmark. Deleted rows are excluded."
+        >
+          <ScoreByModelChart points={providerBenchmarkPoints} />
+        </Section>
+
+        <Section
+          eyebrow="Provider tests"
+          title="Cost vs. score"
+          description="Each point is one provider route's benchmark run. Marker shape indicates benchmark; hover a point for details."
+        >
+          <CostVsScoreChart points={providerBenchmarkPoints} />
         </Section>
 
         <Section
