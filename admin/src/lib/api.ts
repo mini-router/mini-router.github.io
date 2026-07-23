@@ -310,6 +310,18 @@ export async function fetchEvaluations(limit = 100): Promise<BackendEvaluationOu
   )
 }
 
+export async function deleteEvaluation(evaluationId: number): Promise<void> {
+  return requestJson<void>(`${ADMIN_API_PREFIX}/evaluations/${evaluationId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function deleteSubmission(submissionId: string): Promise<void> {
+  return requestJson<void>(`${ADMIN_API_PREFIX}/submissions/${submissionId}`, {
+    method: 'DELETE',
+  })
+}
+
 export interface AdminLoginRequest {
   username: string
   password: string
