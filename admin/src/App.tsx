@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   Sparkles,
   SquareTerminal,
+  Trash2,
   Wrench,
 } from 'lucide-react'
 import {
@@ -35,6 +36,8 @@ import {
   clearAdminAuthToken,
   createProviderEvaluations,
   createTrainJob,
+  deleteEvaluation,
+  deleteSubmission,
   fetchAdminLogin,
   fetchAdminLogout,
   fetchAdminConfig,
@@ -262,7 +265,7 @@ function Button({
   type = 'button',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'primary' | 'secondary' | 'quiet'
+  variant?: 'primary' | 'secondary' | 'quiet' | 'danger'
   icon?: ReactNode
 }) {
   const cls =
@@ -270,7 +273,9 @@ function Button({
       ? 'button-primary'
       : variant === 'secondary'
         ? 'button-secondary'
-        : 'button-quiet'
+        : variant === 'danger'
+          ? 'button-danger'
+          : 'button-quiet'
   return (
     <button type={type} {...props} className={[cls, props.className || ''].join(' ')}>
       {icon ? <span className="mr-2">{icon}</span> : null}
@@ -488,7 +493,15 @@ function metricText(metrics: Record<string, unknown>, key: string): string {
   return '—'
 }
 
-function ProviderEvaluationTable({ runs }: { runs: BackendEvaluationOut[] }) {
+function ProviderEvaluationTable({
+  runs,
+  onDelete,
+  deletingId,
+}: {
+  runs: BackendEvaluationOut[]
+  onDelete: (run: BackendEvaluationOut) => void
+  deletingId: number | null
+}) {
   if (!runs.length) {
     return (
       <div className="rounded-lg border border-dashed border-white/10 bg-white/3 px-4 py-5 text-sm text-slate-400">
@@ -511,6 +524,7 @@ function ProviderEvaluationTable({ runs }: { runs: BackendEvaluationOut[] }) {
               <th className="px-4 py-3 font-medium">Repeat</th>
               <th className="px-4 py-3 font-medium">Cost</th>
               <th className="px-4 py-3 font-medium">Duration</th>
+              <th className="px-4 py-3 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -530,6 +544,23 @@ function ProviderEvaluationTable({ runs }: { runs: BackendEvaluationOut[] }) {
                 <td className="px-4 py-3 text-slate-300">{metricText(run.metrics, 'repeat')}</td>
                 <td className="px-4 py-3 text-slate-300">{fmtNum(run.cost_usd)}</td>
                 <td className="px-4 py-3 text-slate-300">{fmtSeconds(run.duration_seconds)}</td>
+                <td className="px-4 py-3">
+                  <Button
+                    variant="danger"
+                    onClick={() => onDelete(run)}
+                    disabled={deletingId === run.id}
+                    icon={
+                      deletingId === run.id ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )
+                    }
+                    className="px-2.5 py-1.5 text-xs"
+                  >
+                    Delete
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -605,6 +636,8 @@ function App() {
   const [providerEvalLoading, setProviderEvalLoading] = useState(false)
   const [providerEvalRuns, setProviderEvalRuns] = useState<BackendEvaluationOut[]>([])
   const [providerEvalError, setProviderEvalError] = useState<string | null>(null)
+  const [deletingEvaluationId, setDeletingEvaluationId] = useState<number | null>(null)
+  const [deletingSubmissionId, setDeletingSubmissionId] = useState<string | null>(null)
   const [reviewControl, setReviewControl] = useState<AdminReviewControl | null>(null)
   const [reviewActionLoading, setReviewActionLoading] = useState(false)
   const [reviewActionNote, setReviewActionNote] = useState<string | null>(null)
@@ -794,6 +827,52 @@ function App() {
       }
     } finally {
       setProviderEvalLoading(false)
+    }
+  }
+
+  const deleteProviderEvaluationRun = async (run: BackendEvaluationOut) => {
+    if (!window.confirm(`Delete evaluation #${run.id}? This cannot be undone.`)) {
+      return
+    }
+    setDeletingEvaluationId(run.id)
+    setProviderEvalError(null)
+    try {
+      await deleteEvaluation(run.id)
+      setProviderEvalRuns((current) => current.filter((item) => item.id !== run.id))
+      setProviderEvalNote(`Deleted evaluation #${run.id}.`)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setProviderEvalError(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      setDeletingEvaluationId(null)
+    }
+  }
+
+  const deleteStandingsSubmission = async (entry: LeaderboardEntry) => {
+    const submissionId = entry.submission_id
+    if (!submissionId) {
+      setLeaderboardError('This standings row has no submission id to delete.')
+      return
+    }
+    if (!window.confirm(`Delete submission "${entry.team}" (${submissionId}) from standings? This cannot be undone.`)) {
+      return
+    }
+    setDeletingSubmissionId(submissionId)
+    setLeaderboardError(null)
+    try {
+      await deleteSubmission(submissionId)
+      setLeaderboard((current) => current.filter((item) => item.submission_id !== submissionId))
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setLeaderboardError(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      setDeletingSubmissionId(null)
     }
   }
 
@@ -1334,7 +1413,11 @@ function App() {
             ) : null}
           </div>
           <div className="mt-4">
-            <ProviderEvaluationTable runs={providerEvalRuns} />
+            <ProviderEvaluationTable
+              runs={providerEvalRuns}
+              onDelete={(run) => void deleteProviderEvaluationRun(run)}
+              deletingId={deletingEvaluationId}
+            />
           </div>
         </Section>
 
@@ -1802,12 +1885,13 @@ function App() {
                     <th className="px-4 py-3 font-medium">BBH</th>
                     <th className="px-4 py-3 font-medium">Submitted</th>
                     <th className="px-4 py-3 font-medium">Report</th>
+                    <th className="px-4 py-3 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {leaderboardLoading && !leaderboard.length ? (
                     <tr>
-                      <td className="px-4 py-6 text-slate-400" colSpan={11}>
+                      <td className="px-4 py-6 text-slate-400" colSpan={12}>
                         Loading leaderboard…
                       </td>
                     </tr>
@@ -1843,11 +1927,28 @@ function App() {
                             Open
                           </a>
                         </td>
+                        <td className="px-4 py-3">
+                          <Button
+                            variant="danger"
+                            onClick={() => void deleteStandingsSubmission(entry)}
+                            disabled={deletingSubmissionId === entry.submission_id}
+                            icon={
+                              deletingSubmissionId === entry.submission_id ? (
+                                <LoaderCircle className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )
+                            }
+                            className="px-2.5 py-1.5 text-xs"
+                          >
+                            Delete
+                          </Button>
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td className="px-4 py-6 text-slate-400" colSpan={11}>
+                      <td className="px-4 py-6 text-slate-400" colSpan={12}>
                         No completed submissions yet.
                       </td>
                     </tr>
