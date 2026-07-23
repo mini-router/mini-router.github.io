@@ -22,6 +22,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  RotateCcw,
   Save,
   Server,
   ShieldCheck,
@@ -52,6 +53,8 @@ import {
   getAdminAuthToken,
   pauseReviewControl,
   resetApiBaseUrl,
+  revokeEvaluation,
+  revokeSubmission,
   setApiBaseUrl,
   setAdminAuthToken,
   submitCheckpoint,
@@ -496,10 +499,12 @@ function metricText(metrics: Record<string, unknown>, key: string): string {
 function ProviderEvaluationTable({
   runs,
   onDelete,
+  onRevoke,
   deletingId,
 }: {
   runs: BackendEvaluationOut[]
   onDelete: (run: BackendEvaluationOut) => void
+  onRevoke: (run: BackendEvaluationOut) => void
   deletingId: number | null
 }) {
   if (!runs.length) {
@@ -528,41 +533,73 @@ function ProviderEvaluationTable({
             </tr>
           </thead>
           <tbody>
-            {runs.map((run) => (
-              <tr key={`provider-eval-${run.id}`} className="border-t border-white/8 hover:bg-white/[0.03]">
-                <td className="px-4 py-3 font-mono text-xs text-slate-200">{run.id}</td>
-                <td className="px-4 py-3 text-slate-300">{metricText(run.metrics, 'provider_route')}</td>
-                <td className="px-4 py-3 text-slate-300">
-                  {run.benchmark_names.join(', ') || metricText(run.metrics, 'benchmark')}
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`rounded-full border px-2.5 py-1 text-xs ${statusClass(run.status)}`}>
-                    {run.status}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-slate-300">{fmtPct(run.score)}</td>
-                <td className="px-4 py-3 text-slate-300">{metricText(run.metrics, 'repeat')}</td>
-                <td className="px-4 py-3 text-slate-300">{fmtNum(run.cost_usd)}</td>
-                <td className="px-4 py-3 text-slate-300">{fmtSeconds(run.duration_seconds)}</td>
-                <td className="px-4 py-3">
-                  <Button
-                    variant="danger"
-                    onClick={() => onDelete(run)}
-                    disabled={deletingId === run.id}
-                    icon={
-                      deletingId === run.id ? (
-                        <LoaderCircle className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )
-                    }
-                    className="px-2.5 py-1.5 text-xs"
-                  >
-                    Delete
-                  </Button>
-                </td>
-              </tr>
-            ))}
+            {runs.map((run) => {
+              const isDeleted = Boolean(run.deleted_at)
+              return (
+                <tr
+                  key={`provider-eval-${run.id}`}
+                  className={[
+                    'border-t border-white/8 hover:bg-white/[0.03]',
+                    isDeleted ? 'opacity-50' : '',
+                  ].join(' ')}
+                >
+                  <td className="px-4 py-3 font-mono text-xs text-slate-200">{run.id}</td>
+                  <td className="px-4 py-3 text-slate-300">{metricText(run.metrics, 'provider_route')}</td>
+                  <td className="px-4 py-3 text-slate-300">
+                    {run.benchmark_names.join(', ') || metricText(run.metrics, 'benchmark')}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full border px-2.5 py-1 text-xs ${statusClass(run.status)}`}>
+                      {run.status}
+                    </span>
+                    {isDeleted ? (
+                      <span className="ml-2 rounded-full border border-rose-400/30 bg-rose-400/10 px-2.5 py-1 text-xs text-rose-200">
+                        deleted
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="px-4 py-3 text-slate-300">{fmtPct(run.score)}</td>
+                  <td className="px-4 py-3 text-slate-300">{metricText(run.metrics, 'repeat')}</td>
+                  <td className="px-4 py-3 text-slate-300">{fmtNum(run.cost_usd)}</td>
+                  <td className="px-4 py-3 text-slate-300">{fmtSeconds(run.duration_seconds)}</td>
+                  <td className="px-4 py-3">
+                    {isDeleted ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => onRevoke(run)}
+                        disabled={deletingId === run.id}
+                        icon={
+                          deletingId === run.id ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-4 w-4" />
+                          )
+                        }
+                        className="px-2.5 py-1.5 text-xs"
+                      >
+                        Revoke
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="danger"
+                        onClick={() => onDelete(run)}
+                        disabled={deletingId === run.id}
+                        icon={
+                          deletingId === run.id ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )
+                        }
+                        className="px-2.5 py-1.5 text-xs"
+                      >
+                        Delete
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -831,15 +868,33 @@ function App() {
   }
 
   const deleteProviderEvaluationRun = async (run: BackendEvaluationOut) => {
-    if (!window.confirm(`Delete evaluation #${run.id}? This cannot be undone.`)) {
+    if (!window.confirm(`Delete evaluation #${run.id}? You can revoke this from the same row afterward.`)) {
       return
     }
     setDeletingEvaluationId(run.id)
     setProviderEvalError(null)
     try {
-      await deleteEvaluation(run.id)
-      setProviderEvalRuns((current) => current.filter((item) => item.id !== run.id))
-      setProviderEvalNote(`Deleted evaluation #${run.id}.`)
+      const updated = await deleteEvaluation(run.id)
+      setProviderEvalRuns((current) => current.map((item) => (item.id === run.id ? updated : item)))
+      setProviderEvalNote(`Deleted evaluation #${run.id}. Use Revoke to restore it.`)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setProviderEvalError(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      setDeletingEvaluationId(null)
+    }
+  }
+
+  const revokeProviderEvaluationRun = async (run: BackendEvaluationOut) => {
+    setDeletingEvaluationId(run.id)
+    setProviderEvalError(null)
+    try {
+      const updated = await revokeEvaluation(run.id)
+      setProviderEvalRuns((current) => current.map((item) => (item.id === run.id ? updated : item)))
+      setProviderEvalNote(`Restored evaluation #${run.id}.`)
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         await expireSession()
@@ -857,14 +912,45 @@ function App() {
       setLeaderboardError('This standings row has no submission id to delete.')
       return
     }
-    if (!window.confirm(`Delete submission "${entry.team}" (${submissionId}) from standings? This cannot be undone.`)) {
+    if (
+      !window.confirm(
+        `Delete submission "${entry.team}" (${submissionId}) from standings? You can revoke this from the same row afterward.`,
+      )
+    ) {
       return
     }
     setDeletingSubmissionId(submissionId)
     setLeaderboardError(null)
     try {
       await deleteSubmission(submissionId)
-      setLeaderboard((current) => current.filter((item) => item.submission_id !== submissionId))
+      setLeaderboard((current) =>
+        current.map((item) =>
+          item.submission_id === submissionId ? { ...item, deleted_at: new Date().toISOString() } : item,
+        ),
+      )
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        await expireSession()
+      } else {
+        setLeaderboardError(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      setDeletingSubmissionId(null)
+    }
+  }
+
+  const revokeStandingsSubmission = async (entry: LeaderboardEntry) => {
+    const submissionId = entry.submission_id
+    if (!submissionId) {
+      return
+    }
+    setDeletingSubmissionId(submissionId)
+    setLeaderboardError(null)
+    try {
+      await revokeSubmission(submissionId)
+      setLeaderboard((current) =>
+        current.map((item) => (item.submission_id === submissionId ? { ...item, deleted_at: null } : item)),
+      )
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         await expireSession()
@@ -1416,6 +1502,7 @@ function App() {
             <ProviderEvaluationTable
               runs={providerEvalRuns}
               onDelete={(run) => void deleteProviderEvaluationRun(run)}
+              onRevoke={(run) => void revokeProviderEvaluationRun(run)}
               deletingId={deletingEvaluationId}
             />
           </div>
@@ -1896,56 +1983,88 @@ function App() {
                       </td>
                     </tr>
                   ) : leaderboard.length ? (
-                    leaderboard.map((entry) => (
-                      <tr key={entry.submission_id} className="border-t border-white/8 hover:bg-white/[0.03]">
-                        <td className="px-4 py-3">
-                          <span className="rank-badge bg-white/10 text-slate-200">{entry.rank}</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-slate-100">{entry.team}</div>
-                          <div className="text-xs text-slate-400">{entry.submission_id}</div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`rounded-full border px-2.5 py-1 text-xs ${statusClass(entry.status)}`}>
-                            {entry.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-slate-200">{fmtPct(entry.accuracy)}</td>
-                        <td className="px-4 py-3 text-slate-300">{fmtPct(entry.math)}</td>
-                        <td className="px-4 py-3 text-slate-300">{fmtPct(entry.mmlu)}</td>
-                        <td className="px-4 py-3 text-slate-300">{fmtPct(entry.gsm8k)}</td>
-                        <td className="px-4 py-3 text-slate-300">{fmtPct(entry.humaneval)}</td>
-                        <td className="px-4 py-3 text-slate-300">{fmtPct(entry.bbh)}</td>
-                        <td className="px-4 py-3 text-slate-300">{fmtDate(entry.submitted)}</td>
-                        <td className="px-4 py-3">
-                          <a
-                            className="button-quiet text-xs"
-                            href={entry.report}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Open
-                          </a>
-                        </td>
-                        <td className="px-4 py-3">
-                          <Button
-                            variant="danger"
-                            onClick={() => void deleteStandingsSubmission(entry)}
-                            disabled={deletingSubmissionId === entry.submission_id}
-                            icon={
-                              deletingSubmissionId === entry.submission_id ? (
-                                <LoaderCircle className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-4 w-4" />
-                              )
-                            }
-                            className="px-2.5 py-1.5 text-xs"
-                          >
-                            Delete
-                          </Button>
-                        </td>
-                      </tr>
-                    ))
+                    leaderboard.map((entry) => {
+                      const isDeleted = Boolean(entry.deleted_at)
+                      return (
+                        <tr
+                          key={entry.submission_id}
+                          className={[
+                            'border-t border-white/8 hover:bg-white/[0.03]',
+                            isDeleted ? 'opacity-50' : '',
+                          ].join(' ')}
+                        >
+                          <td className="px-4 py-3">
+                            <span className="rank-badge bg-white/10 text-slate-200">{entry.rank}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-slate-100">{entry.team}</div>
+                            <div className="text-xs text-slate-400">{entry.submission_id}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded-full border px-2.5 py-1 text-xs ${statusClass(entry.status)}`}>
+                              {entry.status}
+                            </span>
+                            {isDeleted ? (
+                              <span className="ml-2 rounded-full border border-rose-400/30 bg-rose-400/10 px-2.5 py-1 text-xs text-rose-200">
+                                deleted
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="px-4 py-3 text-slate-200">{fmtPct(entry.accuracy)}</td>
+                          <td className="px-4 py-3 text-slate-300">{fmtPct(entry.math)}</td>
+                          <td className="px-4 py-3 text-slate-300">{fmtPct(entry.mmlu)}</td>
+                          <td className="px-4 py-3 text-slate-300">{fmtPct(entry.gsm8k)}</td>
+                          <td className="px-4 py-3 text-slate-300">{fmtPct(entry.humaneval)}</td>
+                          <td className="px-4 py-3 text-slate-300">{fmtPct(entry.bbh)}</td>
+                          <td className="px-4 py-3 text-slate-300">{fmtDate(entry.submitted)}</td>
+                          <td className="px-4 py-3">
+                            <a
+                              className="button-quiet text-xs"
+                              href={entry.report}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open
+                            </a>
+                          </td>
+                          <td className="px-4 py-3">
+                            {isDeleted ? (
+                              <Button
+                                variant="secondary"
+                                onClick={() => void revokeStandingsSubmission(entry)}
+                                disabled={deletingSubmissionId === entry.submission_id}
+                                icon={
+                                  deletingSubmissionId === entry.submission_id ? (
+                                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="h-4 w-4" />
+                                  )
+                                }
+                                className="px-2.5 py-1.5 text-xs"
+                              >
+                                Revoke
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="danger"
+                                onClick={() => void deleteStandingsSubmission(entry)}
+                                disabled={deletingSubmissionId === entry.submission_id}
+                                icon={
+                                  deletingSubmissionId === entry.submission_id ? (
+                                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-4 w-4" />
+                                  )
+                                }
+                                className="px-2.5 py-1.5 text-xs"
+                              >
+                                Delete
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })
                   ) : (
                     <tr>
                       <td className="px-4 py-6 text-slate-400" colSpan={12}>

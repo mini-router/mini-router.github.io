@@ -122,6 +122,7 @@ interface BackendLeaderboardEntry {
   submitted: string
   report: string
   status: string
+  deleted_at: string | null
 }
 
 interface BackendLeaderboardResponse {
@@ -147,6 +148,7 @@ function normalizeLeaderboardEntry(entry: BackendLeaderboardEntry): LeaderboardE
     submitted: entry.submitted,
     report,
     status: entry.status,
+    deleted_at: entry.deleted_at,
   }
 }
 
@@ -198,6 +200,7 @@ export interface BackendEvaluationOut {
   started_at: string | null
   finished_at: string | null
   created_at: string
+  deleted_at: string | null
 }
 
 export interface BackendTrainOut {
@@ -248,6 +251,7 @@ export interface BackendSubmissionOut {
   submission_artifact_id: string | null
   created_at: string
   updated_at: string
+  deleted_at: string | null
   evaluations: BackendEvaluationOut[]
   trains: BackendTrainOut[]
 }
@@ -310,15 +314,27 @@ export async function fetchEvaluations(limit = 100): Promise<BackendEvaluationOu
   )
 }
 
-export async function deleteEvaluation(evaluationId: number): Promise<void> {
-  return requestJson<void>(`${ADMIN_API_PREFIX}/evaluations/${evaluationId}`, {
+export async function deleteEvaluation(evaluationId: number): Promise<BackendEvaluationOut> {
+  return requestJson<BackendEvaluationOut>(`${ADMIN_API_PREFIX}/evaluations/${evaluationId}`, {
     method: 'DELETE',
   })
 }
 
-export async function deleteSubmission(submissionId: string): Promise<void> {
-  return requestJson<void>(`${ADMIN_API_PREFIX}/submissions/${submissionId}`, {
+export async function revokeEvaluation(evaluationId: number): Promise<BackendEvaluationOut> {
+  return requestJson<BackendEvaluationOut>(`${ADMIN_API_PREFIX}/evaluations/${evaluationId}/revoke`, {
+    method: 'POST',
+  })
+}
+
+export async function deleteSubmission(submissionId: string): Promise<BackendSubmissionOut> {
+  return requestJson<BackendSubmissionOut>(`${ADMIN_API_PREFIX}/submissions/${submissionId}`, {
     method: 'DELETE',
+  })
+}
+
+export async function revokeSubmission(submissionId: string): Promise<BackendSubmissionOut> {
+  return requestJson<BackendSubmissionOut>(`${ADMIN_API_PREFIX}/submissions/${submissionId}/revoke`, {
+    method: 'POST',
   })
 }
 

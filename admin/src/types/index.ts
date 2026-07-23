@@ -13,4 +13,5 @@ export interface LeaderboardEntry {
   submitted: string
   report: string
   status?: string
+  deleted_at?: string | null
 }
